@@ -1,0 +1,136 @@
+name: Build OBS VLC Plugin
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MinGW environment
+        shell: pwsh
+        run: |
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download OBS Studio binaries for linking
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/obsproject/obs-studio/releases/download/30.2.3/obs-studio-30.2.3-windows-x64.zip" -OutFile "obs.zip"
+          Expand-Archive obs.zip -DestinationPath "obs-studio"
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER="gcc.exe" -DCMAKE_MAKE_PROGRAM="mingw32-make.exe" -DOBS_DIR="$PWD/obs-studio"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release
+
+      - name: Package Artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "package/obs-plugins/64bit"
+          New-Item -ItemType Directory -Force -Path "package/data/obs-plugins/vlc-video"
+          Copy-Item "build/vlc-video.dll" "package/obs-plugins/64bit/"
+          Copy-Item -Recurse "data/locale" "package/data/obs-plugins/vlc-video/"
+          Compress-Archive -Path "package/*" -DestinationPath "obs-vlc-by-kubo-windows-x64.zip"
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-vlc-by-kubo-windows-x64
+          path: obs-vlc-by-kubo-windows-x64.zip
+
+  build-linux:
+    name: Build (Linux x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libobs-dev libvlc-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build --config Release
+
+      - name: Package Artifact
+        run: |
+          mkdir -p package/obs-plugins/64bit package/data/obs-plugins/vlc-video
+          cp build/vlc-video.so package/obs-plugins/64bit/
+          cp -r data/locale package/data/obs-plugins/vlc-video/
+          tar -czvf obs-vlc-by-kubo-linux-x86_64.tar.gz -C package .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-vlc-by-kubo-linux-x86_64
+          path: obs-vlc-by-kubo-linux-x86_64.tar.gz
+
+  build-macos:
+    name: Build (macOS Universal)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (Universal Binary)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+
+      - name: Build
+        run: |
+          cmake --build build --config Release
+
+      - name: Package Artifact
+        run: |
+          mkdir -p package/obs-plugins package/data/obs-plugins/vlc-video
+          cp build/vlc-video.so package/obs-plugins/
+          cp -r data/locale package/data/obs-plugins/vlc-video/
+          tar -czvf obs-vlc-by-kubo-macos-universal.tar.gz -C package .
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-vlc-by-kubo-macos-universal
+          path: obs-vlc-by-kubo-macos-universal.tar.gz
+
+  release:
+    name: Create Release
+    needs: [build-windows, build-linux, build-macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all workflow artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            obs-vlc-by-kubo-windows-x64/obs-vlc-by-kubo-windows-x64.zip
+            obs-vlc-by-kubo-linux-x86_64/obs-vlc-by-kubo-linux-x86_64.tar.gz
+            obs-vlc-by-kubo-macos-universal/obs-vlc-by-kubo-macos-universal.tar.gz
+          draft: false
+          prerelease: false

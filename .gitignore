@@ -1,0 +1,25 @@
+# Build outputs
+build/
+bin/
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.exp
+*.pdb
+*.zip
+*.tar.gz
+
+# IDE / Editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# OS generated
+.DS_Store
+Thumbs.db

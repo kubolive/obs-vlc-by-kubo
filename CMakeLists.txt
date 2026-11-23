@@ -74,9 +74,9 @@ else()
 
     if(WIN32)
       target_compile_definitions(${TARGET_NAME} PRIVATE _WIN32 UNICODE _UNICODE LIBOBS_EXPORTS)
-      # Locate obs.dll / obs.lib if path provided, e.g. -DOBS_DIR="C:/Program Files/obs-studio"
+      # Locate obs.dll / obs.lib if path provided, e.g. -DOBS_DIR="..."
       if(OBS_DIR)
-        target_link_directories(${TARGET_NAME} PRIVATE "${OBS_DIR}/bin/64bit" "${OBS_DIR}/lib")
+        target_link_directories(${TARGET_NAME} PRIVATE "${OBS_DIR}" "${OBS_DIR}/bin/64bit" "${OBS_DIR}/lib")
       else()
         target_link_directories(${TARGET_NAME} PRIVATE "C:/Program Files/obs-studio/bin/64bit")
       endif()

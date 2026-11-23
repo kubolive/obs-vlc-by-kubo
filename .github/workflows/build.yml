@@ -27,13 +27,20 @@ jobs:
       - name: Download OBS Studio binaries for linking
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://github.com/obsproject/obs-studio/releases/download/30.2.3/obs-studio-30.2.3-windows-x64.zip" -OutFile "obs.zip"
+          Invoke-WebRequest -Uri "https://github.com/obsproject/obs-studio/releases/download/33.0.3/OBS-Studio-33.0.3-Windows-x64.zip" -OutFile "obs.zip"
           Expand-Archive obs.zip -DestinationPath "obs-studio"
 
       - name: Configure CMake
         shell: pwsh
         run: |
-          cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER="gcc.exe" -DCMAKE_MAKE_PROGRAM="mingw32-make.exe" -DOBS_DIR="$PWD/obs-studio"
+          $obsDll = Get-ChildItem -Path "obs-studio" -Recurse -Filter "obs.dll" | Select-Object -First 1
+          if (-not $obsDll) {
+            Write-Error "Could not find obs.dll in extracted OBS archive"
+            exit 1
+          }
+          $obsDir = $obsDll.Directory.FullName
+          Write-Host "Found obs.dll in directory: $obsDir"
+          cmake -B build -G "MinGW Makefiles" -DCMAKE_C_COMPILER="gcc.exe" -DCMAKE_MAKE_PROGRAM="mingw32-make.exe" -DOBS_DIR="$obsDir"
 
       - name: Build
         shell: pwsh

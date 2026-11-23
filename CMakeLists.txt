@@ -31,6 +31,8 @@ target_include_directories(${TARGET_NAME} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
   "${CMAKE_CURRENT_SOURCE_DIR}/obs-headers"
+  $<$<PLATFORM_ID:Darwin>:/opt/homebrew/include>
+  $<$<PLATFORM_ID:Darwin>:/usr/local/include>
 )
 
 # LibVLC headers

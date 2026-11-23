@@ -47,7 +47,7 @@ jobs:
         run: |
           cmake --build build --config Release
 
-      - name: Package Artifact
+      - name: Package Zip Artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "package/obs-plugins/64bit"
@@ -56,11 +56,29 @@ jobs:
           Copy-Item -Recurse "data/locale" "package/data/obs-plugins/vlc-video/"
           Compress-Archive -Path "package/*" -DestinationPath "obs-vlc-by-kubo-windows-x64.zip"
 
-      - name: Upload Windows Artifact
+      - name: Build Windows Installer (.exe)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y
+          }
+          cd installer/windows
+          makensis installer.nsi
+          cd ../..
+          if (Test-Path "obs-vlc-by-kubo-windows-x64-installer.exe") {
+            Write-Host "Successfully generated Windows installer EXE"
+          } else {
+            Write-Error "Failed to generate installer EXE"
+            exit 1
+          }
+
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: obs-vlc-by-kubo-windows-x64
-          path: obs-vlc-by-kubo-windows-x64.zip
+          path: |
+            obs-vlc-by-kubo-windows-x64.zip
+            obs-vlc-by-kubo-windows-x64-installer.exe
 
   build-linux:
     name: Build (Linux x86_64)
@@ -82,18 +100,46 @@ jobs:
         run: |
           cmake --build build --config Release
 
-      - name: Package Artifact
+      - name: Package Tar.gz Artifact
         run: |
           mkdir -p package/obs-plugins/64bit package/data/obs-plugins/vlc-video
           cp build/vlc-video.so package/obs-plugins/64bit/
           cp -r data/locale package/data/obs-plugins/vlc-video/
           tar -czvf obs-vlc-by-kubo-linux-x86_64.tar.gz -C package .
 
-      - name: Upload Linux Artifact
+      - name: Build Linux Deb Package (.deb)
+        run: |
+          mkdir -p deb-pkg/DEBIAN
+          mkdir -p deb-pkg/usr/lib/x86_64-linux-gnu/obs-plugins
+          mkdir -p deb-pkg/usr/share/obs/obs-plugins/vlc-video/locale
+
+          cp build/vlc-video.so deb-pkg/usr/lib/x86_64-linux-gnu/obs-plugins/
+          cp -r data/locale/* deb-pkg/usr/share/obs/obs-plugins/vlc-video/locale/
+
+          cat << 'EOF' > deb-pkg/DEBIAN/control
+Package: obs-vlc-by-kubo
+Version: 1.0.0
+Section: video
+Priority: optional
+Architecture: amd64
+Maintainer: kubolive
+Description: Enhanced VLC Video Source plugin for OBS Studio
+ ⚠️ WARNING: Installing this plugin will overwrite the default obs-vlc
+ (vlc-video) plugin of OBS Studio. Back up your original plugin file
+ before replacing it.
+EOF
+
+          cp installer/linux/preinst deb-pkg/DEBIAN/preinst
+          chmod 755 deb-pkg/DEBIAN/preinst
+          dpkg-deb --build --root-owner-group deb-pkg obs-vlc-by-kubo-linux-x86_64.deb
+
+      - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: obs-vlc-by-kubo-linux-x86_64
-          path: obs-vlc-by-kubo-linux-x86_64.tar.gz
+          path: |
+            obs-vlc-by-kubo-linux-x86_64.tar.gz
+            obs-vlc-by-kubo-linux-x86_64.deb
 
   build-macos:
     name: Build (macOS Universal)
@@ -114,18 +160,64 @@ jobs:
         run: |
           cmake --build build --config Release
 
-      - name: Package Artifact
+      - name: Package Tar.gz Artifact
         run: |
           mkdir -p package/obs-plugins package/data/obs-plugins/vlc-video
           cp build/vlc-video.so package/obs-plugins/
           cp -r data/locale package/data/obs-plugins/vlc-video/
           tar -czvf obs-vlc-by-kubo-macos-universal.tar.gz -C package .
 
-      - name: Upload macOS Artifact
+      - name: Build macOS Installer Package (.pkg)
+        run: |
+          mkdir -p "pkg-root/Library/Application Support/obs-studio/plugins/vlc-video/bin"
+          mkdir -p "pkg-root/Library/Application Support/obs-studio/plugins/vlc-video/data/locale"
+          mkdir -p pkg-scripts pkg-resources
+
+          cp build/vlc-video.so "pkg-root/Library/Application Support/obs-studio/plugins/vlc-video/bin/"
+          cp -r data/locale/* "pkg-root/Library/Application Support/obs-studio/plugins/vlc-video/data/locale/"
+
+          cp installer/macos/preinstall pkg-scripts/preinstall
+          cp installer/macos/postinstall pkg-scripts/postinstall
+          chmod 755 pkg-scripts/preinstall pkg-scripts/postinstall
+
+          cp installer/macos/welcome.html pkg-resources/welcome.html
+
+          pkgbuild --root pkg-root \
+                   --identifier com.kubolive.obs-vlc \
+                   --version 1.0.0 \
+                   --install-location "/" \
+                   --scripts pkg-scripts \
+                   component.pkg
+
+          cat << 'EOF' > distribution.xml
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>obs-vlc-by-kubo</title>
+    <welcome file="welcome.html"/>
+    <pkg-ref id="com.kubolive.obs-vlc"/>
+    <options customize="never" require-scripts="false"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.kubolive.obs-vlc"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.kubolive.obs-vlc" visible="false">
+        <pkg-ref id="com.kubolive.obs-vlc"/>
+    </choice>
+    <pkg-ref id="com.kubolive.obs-vlc" version="1.0.0" onConclusion="none">component.pkg</pkg-ref>
+</installer-gui-script>
+EOF
+
+          productbuild --distribution distribution.xml --resources pkg-resources --package-path . obs-vlc-by-kubo-macos-universal.pkg || cp component.pkg obs-vlc-by-kubo-macos-universal.pkg
+
+      - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: obs-vlc-by-kubo-macos-universal
-          path: obs-vlc-by-kubo-macos-universal.tar.gz
+          path: |
+            obs-vlc-by-kubo-macos-universal.tar.gz
+            obs-vlc-by-kubo-macos-universal.pkg
 
   release:
     name: Create Release
@@ -141,7 +233,10 @@ jobs:
         with:
           files: |
             obs-vlc-by-kubo-windows-x64/obs-vlc-by-kubo-windows-x64.zip
+            obs-vlc-by-kubo-windows-x64/obs-vlc-by-kubo-windows-x64-installer.exe
             obs-vlc-by-kubo-linux-x86_64/obs-vlc-by-kubo-linux-x86_64.tar.gz
+            obs-vlc-by-kubo-linux-x86_64/obs-vlc-by-kubo-linux-x86_64.deb
             obs-vlc-by-kubo-macos-universal/obs-vlc-by-kubo-macos-universal.tar.gz
+            obs-vlc-by-kubo-macos-universal/obs-vlc-by-kubo-macos-universal.pkg
           draft: false
           prerelease: false

@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+# Overwrite in /Applications/OBS.app/Contents/PlugIns if OBS.app exists
+if [ -d "/Applications/OBS.app/Contents/PlugIns" ]; then
+    cp "/Library/Application Support/obs-studio/plugins/vlc-video/bin/vlc-video.so" "/Applications/OBS.app/Contents/PlugIns/vlc-video.so" 2>/dev/null || true
+fi
+
+exit 0

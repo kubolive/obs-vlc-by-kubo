@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+echo "================================================================================"
+echo "⚠️ WARNING: Installing this plugin will overwrite the default obs-vlc (vlc-video)"
+echo "   plugin of OBS Studio. Back up your original plugin file before replacing it."
+echo "================================================================================"
+
+# Backup existing files if found in Application Support or OBS.app
+BACKUP_DIR="/Library/Application Support/obs-studio/plugins/vlc-video/backup"
+mkdir -p "$BACKUP_DIR"
+
+if [ -f "/Applications/OBS.app/Contents/PlugIns/vlc-video.so" ]; then
+    cp "/Applications/OBS.app/Contents/PlugIns/vlc-video.so" "$BACKUP_DIR/vlc-video.so.bak" 2>/dev/null || true
+fi
+
+exit 0

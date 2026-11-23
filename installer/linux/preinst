@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+echo "================================================================================"
+echo "⚠️  WARNING: Installing this plugin will overwrite the default obs-vlc"
+echo "    (vlc-video) plugin of OBS Studio. Back up your original plugin file"
+echo "    before replacing it."
+echo "================================================================================"
+
+# Backup original file if exists
+TARGET="/usr/lib/x86_64-linux-gnu/obs-plugins/vlc-video.so"
+if [ -f "$TARGET" ]; then
+    echo "Creating backup at ${TARGET}.bak..."
+    cp "$TARGET" "${TARGET}.bak" 2>/dev/null || true
+fi
+
+exit 0

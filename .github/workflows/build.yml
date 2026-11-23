@@ -115,22 +115,10 @@ jobs:
 
           cp build/vlc-video.so deb-pkg/usr/lib/x86_64-linux-gnu/obs-plugins/
           cp -r data/locale/* deb-pkg/usr/share/obs/obs-plugins/vlc-video/locale/
-
-          cat << 'EOF' > deb-pkg/DEBIAN/control
-Package: obs-vlc-by-kubo
-Version: 1.0.0
-Section: video
-Priority: optional
-Architecture: amd64
-Maintainer: kubolive
-Description: Enhanced VLC Video Source plugin for OBS Studio
- ⚠️ WARNING: Installing this plugin will overwrite the default obs-vlc
- (vlc-video) plugin of OBS Studio. Back up your original plugin file
- before replacing it.
-EOF
-
+          cp installer/linux/control deb-pkg/DEBIAN/control
           cp installer/linux/preinst deb-pkg/DEBIAN/preinst
           chmod 755 deb-pkg/DEBIAN/preinst
+
           dpkg-deb --build --root-owner-group deb-pkg obs-vlc-by-kubo-linux-x86_64.deb
 
       - name: Upload Linux Artifacts
@@ -181,6 +169,7 @@ EOF
           chmod 755 pkg-scripts/preinstall pkg-scripts/postinstall
 
           cp installer/macos/welcome.html pkg-resources/welcome.html
+          cp installer/macos/distribution.xml distribution.xml
 
           pkgbuild --root pkg-root \
                    --identifier com.kubolive.obs-vlc \
@@ -188,26 +177,6 @@ EOF
                    --install-location "/" \
                    --scripts pkg-scripts \
                    component.pkg
-
-          cat << 'EOF' > distribution.xml
-<?xml version="1.0" encoding="utf-8"?>
-<installer-gui-script minSpecVersion="1">
-    <title>obs-vlc-by-kubo</title>
-    <welcome file="welcome.html"/>
-    <pkg-ref id="com.kubolive.obs-vlc"/>
-    <options customize="never" require-scripts="false"/>
-    <choices-outline>
-        <line choice="default">
-            <line choice="com.kubolive.obs-vlc"/>
-        </line>
-    </choices-outline>
-    <choice id="default"/>
-    <choice id="com.kubolive.obs-vlc" visible="false">
-        <pkg-ref id="com.kubolive.obs-vlc"/>
-    </choice>
-    <pkg-ref id="com.kubolive.obs-vlc" version="1.0.0" onConclusion="none">component.pkg</pkg-ref>
-</installer-gui-script>
-EOF
 
           productbuild --distribution distribution.xml --resources pkg-resources --package-path . obs-vlc-by-kubo-macos-universal.pkg || cp component.pkg obs-vlc-by-kubo-macos-universal.pkg
 

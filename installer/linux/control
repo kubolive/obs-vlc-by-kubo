@@ -1,0 +1,10 @@
+Package: obs-vlc-by-kubo
+Version: 1.0.0
+Section: video
+Priority: optional
+Architecture: amd64
+Maintainer: kubolive
+Description: Enhanced VLC Video Source plugin for OBS Studio
+ ⚠️ WARNING: Installing this plugin will overwrite the default obs-vlc
+ (vlc-video) plugin of OBS Studio. Back up your original plugin file
+ before replacing it.

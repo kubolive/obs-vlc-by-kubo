@@ -62,8 +62,10 @@ jobs:
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
             choco install nsis -y
           }
+          $nsisExe = if (Get-Command makensis -ErrorAction SilentlyContinue) { "makensis" } else { "C:\Program Files (x86)\NSIS\makensis.exe" }
+          Write-Host "Using NSIS compiler: $nsisExe"
           cd installer/windows
-          makensis installer.nsi
+          & $nsisExe installer.nsi
           cd ../..
           if (Test-Path "obs-vlc-by-kubo-windows-x64-installer.exe") {
             Write-Host "Successfully generated Windows installer EXE"

@@ -2,8 +2,8 @@
 set -e
 
 echo "================================================================================"
-echo "⚠️ WARNING: Installing this plugin will overwrite the default obs-vlc (vlc-video)"
-echo "   plugin of OBS Studio. Back up your original plugin file before replacing it."
+echo "WARNING: Installing this plugin will overwrite the default obs-vlc (vlc-video)"
+echo "         plugin of OBS Studio. Back up your original plugin file before replacing it."
 echo "================================================================================"
 
 # Backup existing files if found in Application Support or OBS.app

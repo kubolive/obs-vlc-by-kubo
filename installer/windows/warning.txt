@@ -1,12 +1,10 @@
 ================================================================================
-⚠️ IMPORTANT WARNING / CẢNH BÁO QUAN TRỌNG:
+WARNING:
 ================================================================================
 
 Installing this plugin will overwrite the default obs-vlc (vlc-video) plugin of OBS Studio.
 
-Việc cài đặt plugin này sẽ ghi đè lên plugin obs-vlc (vlc-video) mặc định của OBS Studio.
-Vui lòng sao lưu file plugin gốc trước khi tiến hành.
-Please back up your original plugin file before replacing it.
+Please back up your original plugin file before proceeding.
 
 If you proceed, this installer will automatically back up your current
 vlc-video.dll to vlc-video.dll.bak in your OBS plugins directory.

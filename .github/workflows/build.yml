@@ -50,14 +50,42 @@ jobs:
       - name: Verify DLL dependencies
         shell: pwsh
         run: |
-          $objdump = "C:\msys64\mingw64\bin\objdump.exe"
-          $output = & $objdump -p "build/vlc-video.dll" | Select-String "DLL Name:"
-          Write-Host "Direct DLL dependencies detected:"
-          $output | ForEach-Object { Write-Host $_ }
-          if ($output -match "libwinpthread" -or $output -match "libgcc") {
-            Write-Error "Found unwanted dynamic MinGW dependencies in vlc-video.dll!"
-            exit 1
-          }
+          python -c "
+          import struct
+          with open('build/vlc-video.dll', 'rb') as f:
+              data = f.read()
+          e_lfanew = struct.unpack('<I', data[0x3c:0x40])[0]
+          opt_header_size = struct.unpack('<H', data[e_lfanew+20:e_lfanew+22])[0]
+          num_sections = struct.unpack('<H', data[e_lfanew+6:e_lfanew+8])[0]
+          section_offset = e_lfanew + 24 + opt_header_size
+          import_rva, import_size = struct.unpack('<II', data[e_lfanew+144:e_lfanew+152])
+          sections = []
+          for i in range(num_sections):
+              sec = data[section_offset + i*40 : section_offset + (i+1)*40]
+              vsize, va, rsize, roffset = struct.unpack('<IIII', sec[8:24])
+              sections.append((va, vsize, roffset, rsize))
+          def rva_to_offset(rva):
+              for va, vsize, roffset, rsize in sections:
+                  if va <= rva < va + vsize:
+                      return roffset + (rva - va)
+              return None
+          import_offset = rva_to_offset(import_rva)
+          pos = import_offset
+          imported_dlls = []
+          while True:
+              ilt, time_stamp, forwarder, name_rva, iat = struct.unpack('<IIIII', data[pos:pos+20])
+              if ilt == 0 and name_rva == 0:
+                  break
+              dll_name_offset = rva_to_offset(name_rva)
+              dll_name = data[dll_name_offset:data.find(b'\x00', dll_name_offset)].decode('latin1')
+              imported_dlls.append(dll_name)
+              pos += 20
+          print('Direct DLL dependencies detected:', imported_dlls)
+          bad = [d for d in imported_dlls if 'pthread' in d.lower() or 'libgcc' in d.lower()]
+          if bad:
+              raise SystemExit(f'ERROR: Found unwanted dynamic dependencies: {bad}')
+          print('DLL verification PASSED: No unwanted MinGW runtime dependencies!')
+          "
 
       - name: Package Zip Artifact
         shell: pwsh

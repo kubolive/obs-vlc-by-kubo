@@ -269,6 +269,7 @@ bool load_libvlc(void)
 		"--no-video-title-show",
 		"--drop-late-frames",
 		"--skip-frames",
+		"--avcodec-hw=none",
 	};
 	libvlc = libvlc_new_(sizeof(argv) / sizeof(argv[0]), argv);
 	if (!libvlc) {

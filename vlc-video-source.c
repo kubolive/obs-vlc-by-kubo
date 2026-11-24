@@ -528,12 +528,6 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 		CHROMA_CONV(val, new_val, ret); \
 	} while (false)
 
-	/* Hardware Decoded Surface formats -> System Memory NV12 via Direct3D11/9 staging download */
-	CHROMA_CONV("DX11", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-	CHROMA_CONV("DXA9", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-	CHROMA_CONV("d3d1", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-	CHROMA_CONV("va08", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-
 	CHROMA_TEST("RGBA", VIDEO_FORMAT_RGBA);
 	CHROMA_TEST("BGRA", VIDEO_FORMAT_BGRA);
 
@@ -787,11 +781,11 @@ static void vlcs_video_display(void *data, void *picture)
 {
 	struct vlc_source *c = data;
 
-	/* Use monotonic OBS clock for frame timestamps to avoid VLC clock jitter.
-	 * libvlc_clock_() is NOT aligned to media PTS and can stall/jump during
-	 * network buffering, causing OBS async video queue to drop/duplicate frames.
-	 * os_gettime_ns() is strictly monotonic and safe. */
-	uint64_t now_ns = os_gettime_ns();
+	/* Video timestamp must stay in the exact same LibVLC clock domain as audio (pts).
+	 * Both audio (vlcs_audio_play) and video subtract time_start (which was captured
+	 * via libvlc_clock_() * 1000ULL). Any discrepancy between video and audio timestamps
+	 * causes OBS's internal A/V sync queue to stall, buffer, or drop frames. */
+	uint64_t now_ns = (uint64_t)libvlc_clock_() * 1000ULL;
 	c->frame.timestamp = (now_ns >= time_start) ? (now_ns - time_start) : 0;
 	obs_source_output_video(c->source, &c->frame);
 

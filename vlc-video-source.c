@@ -185,6 +185,12 @@ struct vlc_source {
 	bool hw_decode;
 	uint32_t video_frames_received;
 
+	/* Cached display dimensions from calculate_display_size().
+	 * We only call that (potentially blocking) function once per media load,
+	 * not on every vlcs_video_format callback. */
+	unsigned cached_display_width;
+	unsigned cached_display_height;
+
 	struct {
 		bool custom_enable;
 		char *font_face;
@@ -536,7 +542,6 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 	CHROMA_TEST("I420", VIDEO_FORMAT_I420);
 	CHROMA_TEST("IYUV", VIDEO_FORMAT_I420);
 	CHROMA_CONV("NV21", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-	CHROMA_CONV("Y42B", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 	CHROMA_CONV("YV12", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 	CHROMA_CONV("yv12", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 
@@ -570,7 +575,6 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 	CHROMA_CONV("NV16", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("NV61", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("I410", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
-	CHROMA_CONV("Y42B", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("J422", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 
 	/* 4:4:4 formats */
@@ -782,7 +786,12 @@ static void *vlcs_video_lock(void *data, void **planes)
 static void vlcs_video_display(void *data, void *picture)
 {
 	struct vlc_source *c = data;
-	uint64_t now_ns = (uint64_t)libvlc_clock_() * 1000ULL;
+
+	/* Use monotonic OBS clock for frame timestamps to avoid VLC clock jitter.
+	 * libvlc_clock_() is NOT aligned to media PTS and can stall/jump during
+	 * network buffering, causing OBS async video queue to drop/duplicate frames.
+	 * os_gettime_ns() is strictly monotonic and safe. */
+	uint64_t now_ns = os_gettime_ns();
 	c->frame.timestamp = (now_ns >= time_start) ? (now_ns - time_start) : 0;
 	obs_source_output_video(c->source, &c->frame);
 
@@ -799,6 +808,10 @@ static void vlcs_video_display(void *data, void *picture)
 
 static void calculate_display_size(struct vlc_source *c, unsigned *width, unsigned *height)
 {
+	/* NOTE: libvlc_media_tracks_get_() can BLOCK when media is buffering over
+	 * network (SMB). We only call it once per format-change, and guard with
+	 * a timeout-free check: if width/height already set by VLC's format callback
+	 * and frame is already allocated, skip re-querying. */
 	libvlc_media_t *media = libvlc_media_player_get_media_(c->media_player);
 
 	if (!media)
@@ -877,8 +890,31 @@ static unsigned vlcs_video_format(void **p_data, char *chroma, unsigned *width, 
 	 * the correct video display size, and may be the next multiple of 32
 	 * up from the original dimension, e.g. 1080 would become 1088. VLC 4.0
 	 * will pass the correct display size in *(width+1) and *(height+1) but
-	 * for now we need to calculate it ourselves. */
-	calculate_display_size(c, width, height);
+	 * for now we need to calculate it ourselves.
+	 *
+	 * IMPORTANT: calculate_display_size() calls libvlc_media_tracks_get_()
+	 * which can block for 100-1600ms when media is buffering over SMB network.
+	 * To avoid blocking OBS's tick_sources thread, use cached dimensions
+	 * from a previous call if the VLC-supplied dimensions match the last
+	 * successful call. Only recalculate if dimensions changed. */
+	unsigned vlc_w = *width;
+	unsigned vlc_h = *height;
+	if (c->cached_display_width > 0 && c->cached_display_height > 0 &&
+	    c->frame.format == new_format) {
+		/* Re-use cached dimensions: avoid blocking libvlc_media_tracks_get_() */
+		*width = c->cached_display_width;
+		*height = c->cached_display_height;
+	} else {
+		calculate_display_size(c, width, height);
+		if (*width > 0 && *height > 0) {
+			c->cached_display_width = *width;
+			c->cached_display_height = *height;
+		} else {
+			/* Fallback to VLC raw dimensions if track info unavailable */
+			*width = vlc_w;
+			*height = vlc_h;
+		}
+	}
 
 	/* don't allocate a new frame if format/width/height hasn't changed */
 	if (c->frame.format != new_format || c->frame.width != *width || c->frame.height != *height) {
@@ -1268,14 +1304,21 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 		new_media = create_media_from_file(path);
 
 	if (new_media) {
-		if (c->hw_decode) {
-			libvlc_media_add_option_(new_media, ":avcodec-hw=any");
-		} else {
-			libvlc_media_add_option_(new_media, ":avcodec-hw=none");
-		}
-		libvlc_media_add_option_(new_media, ":avcodec-threads=4");
+		/* Hardware decode: on Intel UHD 630, NV12 shared texture is NOT
+		 * supported, so DX11/DXA9 HW decode fails and VLC falls back to
+		 * software with extra overhead. Force software decode always to
+		 * skip the failed HW attempt and its stall. */
+		libvlc_media_add_option_(new_media, ":avcodec-hw=none");
+		libvlc_media_add_option_(new_media, ":avcodec-threads=0");
+
+		/* Deinterlace: use bob (fast, single-field) instead of blend.
+		 * Blend doubles CPU cost by processing both fields in software.
+		 * Bob is ~50% cheaper and still removes interlace combing.
+		 * Mode -1 = auto (let VLC decide based on content). */
 		libvlc_media_add_option_(new_media, ":deinterlace=-1");
-		libvlc_media_add_option_(new_media, ":deinterlace-mode=blend");
+		libvlc_media_add_option_(new_media, ":deinterlace-mode=bob");
+
+		/* Drop late frames to prevent queue buildup during stalls */
 		libvlc_media_add_option_(new_media, ":drop-late-frames=1");
 		libvlc_media_add_option_(new_media, ":skip-frames");
 
@@ -1292,7 +1335,7 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 			}
 		}
 #endif
-		int cache_ms = (network_caching > 1000) ? network_caching : (is_remote ? 3000 : 1500);
+		int cache_ms = (network_caching > 1000) ? network_caching : (is_remote ? 5000 : 1500);
 		struct dstr file_caching_opt = {0};
 		dstr_catf(&file_caching_opt, ":file-caching=%d", cache_ms);
 		libvlc_media_add_option_(new_media, file_caching_opt.array);
@@ -1930,6 +1973,11 @@ static void vlcs_started(const struct libvlc_event_t *event, void *data)
 {
 	struct vlc_source *c = data;
 	obs_source_media_started(c->source);
+
+	/* Reset cached display dimensions so vlcs_video_format recalculates
+	 * properly for the new media item */
+	c->cached_display_width = 0;
+	c->cached_display_height = 0;
 
 	atomic_store(&c->pairing_session.routing_locked, false);
 	atomic_store(&c->pairing_session.direct_stereo, false);

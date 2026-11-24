@@ -296,7 +296,7 @@ static void apply_audio_track_runtime(struct vlc_source *c, int track_index)
 	if (!c || !c->media_player || !libvlc_audio_set_track_)
 		return;
 
-	if (c->pairing_mode != PAIR_MODE_PASSTHROUGH)
+	if (c->pairing_mode != PAIR_MODE_PASSTHROUGH && c->pairing_mode != PAIR_MODE_AUTO)
 		return;
 
 	if (!libvlc_audio_get_track_description_ || !libvlc_track_description_list_release_) {
@@ -523,7 +523,6 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 	CHROMA_TEST("I420", VIDEO_FORMAT_I420);
 	CHROMA_TEST("IYUV", VIDEO_FORMAT_I420);
 	CHROMA_CONV("NV21", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
-	CHROMA_CONV("I422", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 	CHROMA_CONV("Y42B", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 	CHROMA_CONV("YV12", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
 	CHROMA_CONV("yv12", MAKEFORMAT('N', 'V', '1', '2'), VIDEO_FORMAT_NV12);
@@ -531,6 +530,8 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 	CHROMA_CONV_FULL("J420", MAKEFORMAT('J', '4', '2', '0'), VIDEO_FORMAT_I420);
 
 	/* 4:2:2 formats */
+	CHROMA_TEST("I422", VIDEO_FORMAT_I422);
+	CHROMA_TEST("Y42B", VIDEO_FORMAT_I422);
 	CHROMA_TEST("UYVY", VIDEO_FORMAT_UYVY);
 	CHROMA_TEST("UYNV", VIDEO_FORMAT_UYVY);
 	CHROMA_TEST("UYNY", VIDEO_FORMAT_UYVY);
@@ -556,7 +557,6 @@ static enum video_format convert_vlc_video_format(char *chroma, bool *full)
 	CHROMA_CONV("NV16", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("NV61", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("I410", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
-	CHROMA_CONV("I422", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("Y42B", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 	CHROMA_CONV("J422", MAKEFORMAT('U', 'Y', 'V', 'Y'), VIDEO_FORMAT_UYVY);
 
@@ -595,6 +595,7 @@ static inline unsigned get_format_lines(enum video_format format, unsigned heigh
 	case VIDEO_FORMAT_I420:
 	case VIDEO_FORMAT_NV12:
 		return (plane == 0) ? height : height / 2;
+	case VIDEO_FORMAT_I422:
 	case VIDEO_FORMAT_YVYU:
 	case VIDEO_FORMAT_YUY2:
 	case VIDEO_FORMAT_UYVY:
@@ -806,11 +807,9 @@ static void calculate_display_size(struct vlc_source *c, unsigned *width, unsign
 			if (display_width == 0 || display_height == 0)
 				continue;
 
-			/* Adjust for Sample Aspect Ratio (SAR) */
-			if (track->video->i_sar_num > 0 && track->video->i_sar_den > 0) {
-				display_width = (unsigned)util_mul_div64(display_width, track->video->i_sar_num,
-									 track->video->i_sar_den);
-			}
+			/* Keep native decoded dimensions to preserve Direct3D11 hardware decoding
+			 * textures and prevent CPU swscale filter insertion. OBS compositor handles
+			 * aspect ratio scaling natively on GPU. */
 
 			switch (track->video->i_orientation) {
 			case libvlc_video_orient_left_top:
@@ -923,7 +922,7 @@ static void *pairing_audio_worker_thread(void *param)
 		if (!atomic_load_explicit(&c->pairing_session.worker_running, memory_order_acquire))
 			break;
 
-		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || atomic_load(&c->pairing_session.direct_stereo))
+		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO || atomic_load(&c->pairing_session.direct_stereo))
 			continue;
 
 		int slot_l = 0;
@@ -1093,7 +1092,7 @@ static void vlcs_audio_play(void *data, const void *samples, unsigned count, int
 	}
 
 	/* 100% UNTOUCHED PASS-THROUGH LOGIC (WITH REALLOC SIZE BUG FIX) */
-	if (!c || c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
+	if (!c || c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
 		if (!c || !c->source)
 			return;
 		size_t size = get_audio_size(c->audio.format, c->audio.speakers, count);
@@ -1163,8 +1162,8 @@ static int vlcs_audio_setup(void **p_data, char *format, unsigned *rate, unsigne
 	if (!c)
 		return -1;
 
-	/* In Pass-through mode: 100% original OBS logic */
-	if (c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
+	/* In Pass-through or Auto mode: direct native OBS audio output */
+	if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
 		enum audio_format new_audio_format;
 		struct obs_audio_info aoi;
 		obs_get_audio_info(&aoi);
@@ -1259,13 +1258,37 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 			libvlc_media_add_option_(new_media, ":avcodec-hw=none");
 		}
 
-		if (is_url) {
+		bool is_remote = is_url;
+#ifdef _WIN32
+		if (!is_remote && path) {
+			if (path[0] == '\\' && path[1] == '\\') {
+				is_remote = true;
+			} else if (path[0] != '\0' && path[1] == ':') {
+				char drive_root[4] = {path[0], ':', '\\', '\0'};
+				if (GetDriveTypeA(drive_root) == DRIVE_REMOTE) {
+					is_remote = true;
+				}
+			}
+		}
+#endif
+		int cache_ms = (network_caching > 1000) ? network_caching : (is_remote ? 2000 : 1000);
+		struct dstr file_caching_opt = {0};
+		dstr_catf(&file_caching_opt, ":file-caching=%d", cache_ms);
+		libvlc_media_add_option_(new_media, file_caching_opt.array);
+		dstr_free(&file_caching_opt);
+
+		if (is_remote || is_url) {
 			struct dstr network_caching_option = {0};
-			dstr_catf(&network_caching_option, ":network-caching=%d", network_caching);
+			dstr_catf(&network_caching_option, ":network-caching=%d", cache_ms);
 			libvlc_media_add_option_(new_media, network_caching_option.array);
 			dstr_free(&network_caching_option);
 		}
-		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
+
+		if (!subtitle_enable) {
+			libvlc_media_add_option_(new_media, ":no-sub-autodetect-file");
+		}
+
+		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
 			struct dstr track_option = {0};
 			dstr_catf(&track_option, ":audio-track=%d", track_index - 1);
 			libvlc_media_add_option_(new_media, track_option.array);
@@ -1273,6 +1296,7 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 		} else {
 			libvlc_media_add_option_(new_media, ":sout-all");
 			libvlc_media_add_option_(new_media, ":sout=#duplicate{dst=display}");
+			libvlc_media_add_option_(new_media, ":sout-mux-caching=500");
 		}
 
 		struct dstr sub_option = {0};

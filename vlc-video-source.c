@@ -300,13 +300,17 @@ static void apply_audio_track_runtime(struct vlc_source *c, int track_index)
 		return;
 
 	if (!libvlc_audio_get_track_description_ || !libvlc_track_description_list_release_) {
-		libvlc_audio_set_track_(c->media_player, track_index);
+		int current_id = libvlc_audio_get_track_ ? libvlc_audio_get_track_(c->media_player) : -999;
+		if (current_id != track_index)
+			libvlc_audio_set_track_(c->media_player, track_index);
 		return;
 	}
 
 	libvlc_track_description_t *desc = libvlc_audio_get_track_description_(c->media_player);
 	if (!desc) {
-		libvlc_audio_set_track_(c->media_player, track_index);
+		int current_id = libvlc_audio_get_track_ ? libvlc_audio_get_track_(c->media_player) : -999;
+		if (current_id != track_index)
+			libvlc_audio_set_track_(c->media_player, track_index);
 		return;
 	}
 
@@ -324,13 +328,16 @@ static void apply_audio_track_runtime(struct vlc_source *c, int track_index)
 		}
 		cur = cur->p_next;
 	}
+	libvlc_track_description_list_release_(desc);
 
 	if (target_id >= 0) {
-		libvlc_audio_set_track_(c->media_player, target_id);
-		blog(LOG_INFO, "[vlc-video] Switched audio track to index %d (VLC ID %d)", track_index, target_id);
+		int current_id = libvlc_audio_get_track_ ? libvlc_audio_get_track_(c->media_player) : -999;
+		if (current_id != target_id) {
+			libvlc_audio_set_track_(c->media_player, target_id);
+			blog(LOG_INFO, "[vlc-video: '%s'] Switched audio track to index %d (VLC ID %d)",
+			     obs_source_get_name(c->source), track_index, target_id);
+		}
 	}
-
-	libvlc_track_description_list_release_(desc);
 }
 
 static void apply_subtitle_track_runtime(struct vlc_source *c, bool enable, int sub_index)
@@ -338,20 +345,26 @@ static void apply_subtitle_track_runtime(struct vlc_source *c, bool enable, int 
 	if (!c || !c->media_player || !libvlc_video_set_spu_)
 		return;
 
+	int current_spu = libvlc_video_get_spu_ ? libvlc_video_get_spu_(c->media_player) : -999;
+
 	if (!enable) {
-		libvlc_video_set_spu_(c->media_player, -1);
-		blog(LOG_INFO, "[vlc-video] Subtitles disabled");
+		if (current_spu != -1) {
+			libvlc_video_set_spu_(c->media_player, -1);
+			blog(LOG_INFO, "[vlc-video: '%s'] Subtitles disabled", obs_source_get_name(c->source));
+		}
 		return;
 	}
 
 	if (!libvlc_video_get_spu_description_ || !libvlc_track_description_list_release_) {
-		libvlc_video_set_spu_(c->media_player, sub_index);
+		if (current_spu != sub_index)
+			libvlc_video_set_spu_(c->media_player, sub_index);
 		return;
 	}
 
 	libvlc_track_description_t *desc = libvlc_video_get_spu_description_(c->media_player);
 	if (!desc) {
-		libvlc_video_set_spu_(c->media_player, sub_index);
+		if (current_spu != sub_index)
+			libvlc_video_set_spu_(c->media_player, sub_index);
 		return;
 	}
 
@@ -369,13 +382,13 @@ static void apply_subtitle_track_runtime(struct vlc_source *c, bool enable, int 
 		}
 		cur = cur->p_next;
 	}
-
-	if (target_id >= 0) {
-		libvlc_video_set_spu_(c->media_player, target_id);
-		blog(LOG_INFO, "[vlc-video] Switched subtitle track to index %d (VLC ID %d)", sub_index, target_id);
-	}
-
 	libvlc_track_description_list_release_(desc);
+
+	if (target_id >= 0 && current_spu != target_id) {
+		libvlc_video_set_spu_(c->media_player, target_id);
+		blog(LOG_INFO, "[vlc-video: '%s'] Switched subtitle track to index %d (VLC ID %d)",
+		     obs_source_get_name(c->source), sub_index, target_id);
+	}
 }
 
 static inline uint32_t obs_to_vlc_color(uint32_t c)
@@ -769,7 +782,8 @@ static void *vlcs_video_lock(void *data, void **planes)
 static void vlcs_video_display(void *data, void *picture)
 {
 	struct vlc_source *c = data;
-	c->frame.timestamp = (uint64_t)libvlc_clock_() * 1000ULL - time_start;
+	uint64_t now_ns = (uint64_t)libvlc_clock_() * 1000ULL;
+	c->frame.timestamp = (now_ns >= time_start) ? (now_ns - time_start) : 0;
 	obs_source_output_video(c->source, &c->frame);
 
 	if (c->video_frames_received < 5 || (c->video_frames_received % 100) == 0) {
@@ -1103,7 +1117,8 @@ static void vlcs_audio_play(void *data, const void *samples, unsigned count, int
 		}
 
 		memcpy((void *)c->audio.data[0], samples, size);
-		c->audio.timestamp = (uint64_t)pts * 1000ULL - time_start;
+		uint64_t pts_ns = (uint64_t)pts * 1000ULL;
+		c->audio.timestamp = (pts_ns >= time_start) ? (pts_ns - time_start) : 0;
 		c->audio.frames = count;
 
 		obs_source_output_audio(c->source, &c->audio);
@@ -1919,10 +1934,6 @@ static void vlcs_started(const struct libvlc_event_t *event, void *data)
 		atomic_store(&c->pairing_session.streams[i].total_samples_received, 0);
 	}
 	mxf_timeline_aligner_reset(&c->pairing_session.aligner);
-
-	if (c->current_audio_track > 0)
-		apply_audio_track_runtime(c, c->current_audio_track);
-	apply_subtitle_track_runtime(c, c->current_subtitle_enable, c->current_subtitle_track);
 
 	UNUSED_PARAMETER(event);
 }

@@ -84,7 +84,7 @@ else()
       endif()
       target_link_libraries(${TARGET_NAME} PRIVATE obs)
       if(MINGW)
-        target_link_options(${TARGET_NAME} PRIVATE -static-libgcc)
+        target_link_libraries(${TARGET_NAME} PRIVATE -static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread)
       endif()
     elseif(APPLE)
       # On macOS, runtime dynamic lookup allows plugins to load cleanly into OBS host

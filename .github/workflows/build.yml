@@ -47,6 +47,18 @@ jobs:
         run: |
           cmake --build build --config Release
 
+      - name: Verify DLL dependencies
+        shell: pwsh
+        run: |
+          $objdump = "C:\msys64\mingw64\bin\objdump.exe"
+          $output = & $objdump -p "build/vlc-video.dll" | Select-String "DLL Name:"
+          Write-Host "Direct DLL dependencies detected:"
+          $output | ForEach-Object { Write-Host $_ }
+          if ($output -match "libwinpthread" -or $output -match "libgcc") {
+            Write-Error "Found unwanted dynamic MinGW dependencies in vlc-video.dll!"
+            exit 1
+          }
+
       - name: Package Zip Artifact
         shell: pwsh
         run: |

@@ -4,7 +4,8 @@ WARNING:
 
 Installing this plugin will overwrite the default obs-vlc (vlc-video) plugin of OBS Studio.
 
-Please back up your original plugin file before proceeding.
+Please close OBS Studio before proceeding.
+Back up your original plugin file before replacing it.
 
 If you proceed, this installer will automatically back up your current
 vlc-video.dll to vlc-video.dll.bak in your OBS plugins directory.

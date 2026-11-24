@@ -99,17 +99,18 @@ jobs:
       - name: Build Windows Installer (.exe)
         shell: pwsh
         run: |
-          $nsisExe = $null
-          if (Get-Command makensis -ErrorAction SilentlyContinue) {
-            $nsisExe = "makensis"
-          } elseif (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") {
-            $nsisExe = "C:\Program Files (x86)\NSIS\makensis.exe"
-          } else {
-            Write-Host "Downloading portable NSIS..."
-            Invoke-WebRequest -Uri "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10.zip" -OutFile "nsis.zip"
-            Expand-Archive nsis.zip -DestinationPath "C:\nsis"
-            $nsisExe = "C:\nsis\nsis-3.10\makensis.exe"
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            Write-Host "Installing NSIS via winget..."
+            try {
+              winget install NSIS.NSIS --silent --accept-package-agreements --accept-source-agreements
+            } catch {
+              Write-Warning "winget failed, attempting choco..."
+            }
+            if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+              choco install nsis -y --no-progress
+            }
           }
+          $nsisExe = if (Get-Command makensis -ErrorAction SilentlyContinue) { "makensis" } else { "C:\Program Files (x86)\NSIS\makensis.exe" }
           Write-Host "Using NSIS compiler: $nsisExe"
           cd installer/windows
           & $nsisExe installer.nsi

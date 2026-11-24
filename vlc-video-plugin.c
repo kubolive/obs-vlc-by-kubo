@@ -266,8 +266,9 @@ bool load_libvlc(void)
 		return true;
 
 	const char *argv[] = {
-		"--avcodec-hw=any",
-		"--deinterlace=0",
+		"--no-video-title-show",
+		"--drop-late-frames",
+		"--skip-frames",
 	};
 	libvlc = libvlc_new_(sizeof(argv) / sizeof(argv[0]), argv);
 	if (!libvlc) {

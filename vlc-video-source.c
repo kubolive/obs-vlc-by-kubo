@@ -296,7 +296,7 @@ static void apply_audio_track_runtime(struct vlc_source *c, int track_index)
 	if (!c || !c->media_player || !libvlc_audio_set_track_)
 		return;
 
-	if (c->pairing_mode != PAIR_MODE_PASSTHROUGH && c->pairing_mode != PAIR_MODE_AUTO)
+	if (c->pairing_mode != PAIR_MODE_PASSTHROUGH)
 		return;
 
 	if (!libvlc_audio_get_track_description_ || !libvlc_track_description_list_release_) {
@@ -821,9 +821,11 @@ static void calculate_display_size(struct vlc_source *c, unsigned *width, unsign
 			if (display_width == 0 || display_height == 0)
 				continue;
 
-			/* Keep native decoded dimensions to preserve Direct3D11 hardware decoding
-			 * textures and prevent CPU swscale filter insertion. OBS compositor handles
-			 * aspect ratio scaling natively on GPU. */
+			/* Adjust for Sample Aspect Ratio (SAR) */
+			if (track->video->i_sar_num > 0 && track->video->i_sar_den > 0) {
+				display_width = (unsigned)util_mul_div64(display_width, track->video->i_sar_num,
+									 track->video->i_sar_den);
+			}
 
 			switch (track->video->i_orientation) {
 			case libvlc_video_orient_left_top:
@@ -936,7 +938,7 @@ static void *pairing_audio_worker_thread(void *param)
 		if (!atomic_load_explicit(&c->pairing_session.worker_running, memory_order_acquire))
 			break;
 
-		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO || atomic_load(&c->pairing_session.direct_stereo))
+		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || atomic_load(&c->pairing_session.direct_stereo))
 			continue;
 
 		int slot_l = 0;
@@ -1106,7 +1108,7 @@ static void vlcs_audio_play(void *data, const void *samples, unsigned count, int
 	}
 
 	/* 100% UNTOUCHED PASS-THROUGH LOGIC (WITH REALLOC SIZE BUG FIX) */
-	if (!c || c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
+	if (!c || c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
 		if (!c || !c->source)
 			return;
 		size_t size = get_audio_size(c->audio.format, c->audio.speakers, count);
@@ -1177,8 +1179,8 @@ static int vlcs_audio_setup(void **p_data, char *format, unsigned *rate, unsigne
 	if (!c)
 		return -1;
 
-	/* In Pass-through or Auto mode: direct native OBS audio output */
-	if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
+	/* In Pass-through mode: direct native OBS audio output */
+	if (c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
 		enum audio_format new_audio_format;
 		struct obs_audio_info aoi;
 		obs_get_audio_info(&aoi);
@@ -1268,10 +1270,14 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 	if (new_media) {
 		if (c->hw_decode) {
 			libvlc_media_add_option_(new_media, ":avcodec-hw=any");
-			libvlc_media_add_option_(new_media, ":deinterlace=0");
 		} else {
 			libvlc_media_add_option_(new_media, ":avcodec-hw=none");
 		}
+		libvlc_media_add_option_(new_media, ":avcodec-threads=4");
+		libvlc_media_add_option_(new_media, ":deinterlace=-1");
+		libvlc_media_add_option_(new_media, ":deinterlace-mode=blend");
+		libvlc_media_add_option_(new_media, ":drop-late-frames=1");
+		libvlc_media_add_option_(new_media, ":skip-frames");
 
 		bool is_remote = is_url;
 #ifdef _WIN32
@@ -1286,7 +1292,7 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 			}
 		}
 #endif
-		int cache_ms = (network_caching > 1000) ? network_caching : (is_remote ? 2000 : 1000);
+		int cache_ms = (network_caching > 1000) ? network_caching : (is_remote ? 3000 : 1500);
 		struct dstr file_caching_opt = {0};
 		dstr_catf(&file_caching_opt, ":file-caching=%d", cache_ms);
 		libvlc_media_add_option_(new_media, file_caching_opt.array);
@@ -1303,7 +1309,7 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 			libvlc_media_add_option_(new_media, ":no-sub-autodetect-file");
 		}
 
-		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH || c->pairing_mode == PAIR_MODE_AUTO) {
+		if (c->pairing_mode == PAIR_MODE_PASSTHROUGH) {
 			struct dstr track_option = {0};
 			dstr_catf(&track_option, ":audio-track=%d", track_index - 1);
 			libvlc_media_add_option_(new_media, track_option.array);
@@ -1311,7 +1317,7 @@ static void add_file(struct vlc_source *c, media_file_array_t *new_files, const 
 		} else {
 			libvlc_media_add_option_(new_media, ":sout-all");
 			libvlc_media_add_option_(new_media, ":sout=#duplicate{dst=display}");
-			libvlc_media_add_option_(new_media, ":sout-mux-caching=500");
+			libvlc_media_add_option_(new_media, ":sout-mux-caching=300");
 		}
 
 		struct dstr sub_option = {0};

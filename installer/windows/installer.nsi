@@ -17,7 +17,7 @@ RequestExecutionLevel admin
 !define MUI_TEXT_LICENSE_SUBTITLE "Please read this important notice before proceeding with installation."
 !define MUI_LICENSEPAGE_TEXT_TOP "WARNING: This plugin will overwrite OBS Studio's original vlc-video files."
 !define MUI_LICENSEPAGE_TEXT_BOTTOM "By clicking Next, you confirm that existing plugin files will be overwritten."
-!define MUI_LICENSEPAGE_BUTTON "I Understand & Next >"
+!define MUI_LICENSEPAGE_BUTTON "Next"
 !insertmacro MUI_PAGE_LICENSE "warning.txt"
 
 ; Directory Selection
